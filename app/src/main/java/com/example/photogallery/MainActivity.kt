@@ -81,6 +81,18 @@ object PhotoRepo {
         Photo(6, R.drawable.six, "Two"),
         Photo(7, R.drawable.seven, "One"),
         Photo(8, R.drawable.eight, "Two"),
+        Photo(10, R.drawable.nine, "Two"),
+        Photo(11, R.drawable.ten, "Two"),
+        Photo(12, R.drawable.eleven, "Two"),
+        Photo(13, R.drawable.twelve, "Two"),
+        Photo(14, R.drawable.thirteen, "Two"),
+        Photo(15, R.drawable.fourteen, "Two"),
+        Photo(16, R.drawable.fifteen, "Two"),
+        Photo(17, R.drawable.sixteen, "Two"),
+        Photo(18, R.drawable.seventeen, "Two"),
+        Photo(19, R.drawable.eighteen, "Two"),
+        Photo(20, R.drawable.nineteen, "Two"),
+        Photo(20, R.drawable.twenty, "Two"),
         Photo(9, R.drawable.nine, "Two"),
 
         )
