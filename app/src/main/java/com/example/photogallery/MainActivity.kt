@@ -2,6 +2,7 @@ package com.example.photogallery
 
 import android.os.Bundle
 import android.graphics.BitmapFactory
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -13,7 +14,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.runtime.LaunchedEffect
 import androidx.activity.compose.BackHandler
-import androidx.annotation.Size
+import androidx.compose.foundation.border
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Box
@@ -23,9 +25,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.KeyboardArrowUp
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.surfaceColorAtElevation
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -33,6 +44,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -62,7 +74,12 @@ class MainActivity : ComponentActivity() {
             PhotoGalleryTheme {
                 // Use the top-level App() which manages activeId and shows FullScreenPhoto
                 Scaffold(modifier = Modifier.fillMaxSize()) { contentPadding ->
-                    App(photos = PhotoRepo.photos, modifier = Modifier.padding(contentPadding).fillMaxSize())
+                    App(
+                        photos = PhotoRepo.photos,
+                        modifier = Modifier
+                            .padding(contentPadding)
+                            .fillMaxSize()
+                    )
                 }
             }
         }
@@ -128,7 +145,7 @@ private fun FullScreenPhoto(
         contentAlignment = Alignment.Center
     ) {
         Scrim(onDismiss, Modifier.fillMaxSize())
-        PhotoCard(photo)
+        PhotoCard(false, false, photo)
     }
 
 }
@@ -179,16 +196,52 @@ private fun PhotoGrid(
     modifier: Modifier = Modifier,
     onPhotoClick: (Photo) -> Unit = {}
 ) {
+    var selectedIds by rememberSaveable { mutableStateOf(emptySet<Int>()) }
+    val inSelectionMode by remember { derivedStateOf { selectedIds.isNotEmpty() } }
+
     LazyVerticalGrid(columns = GridCells.Adaptive(128.dp), modifier = modifier) {
         items(photos, key = { it.id }) { photo ->
-            PhotoCard(photo = photo, onClick = { onPhotoClick(photo) })
+            val selected by remember { derivedStateOf { photo.id in selectedIds } }
+            // Shared click handler: if we're in selection mode, toggle selection on tap;
+            // otherwise, perform the normal photo click (open fullscreen).
+            val handleClick: () -> Unit = {
+                if (inSelectionMode) {
+                    selectedIds = if (photo.id in selectedIds) selectedIds - photo.id else selectedIds + photo.id
+                    Log.i("PhotoGrid", "[tap] selectedIds=$selectedIds")
+                } else {
+                    onPhotoClick(photo)
+                }
+            }
+
+            val handleLongClick: () -> Unit = {
+                // start/modify selection on long press (toggle)
+                selectedIds = if (photo.id in selectedIds) selectedIds - photo.id else selectedIds + photo.id
+                Log.i("PhotoGrid", "[long] selectedIds=$selectedIds")
+            }
+
+            PhotoCard(
+                inSelectionMode,
+                selected,
+                photo = photo,
+                onClick = handleClick,
+                modifier = Modifier.combinedClickable(
+                    onClick = handleClick,
+                    onLongClick = handleLongClick
+                )
+            )
         }
     }
 }
 
 
 @Composable
-fun PhotoCard(photo: Photo, onClick: (() -> Unit)? = null) {
+fun PhotoCard(
+    inSelectionMode: Boolean ,
+    selected: Boolean ,
+    photo: Photo,
+    modifier: Modifier = Modifier,
+    onClick: (() -> Unit)? = null
+) {
     // We'll cap decoded bitmap size to avoid drawing extremely large bitmaps that crash the Canvas.
     // Choose a reasonable max dimension (in dp) for grid items and convert to pixels.
     val density = LocalDensity.current
@@ -205,6 +258,7 @@ fun PhotoCard(photo: Photo, onClick: (() -> Unit)? = null) {
         modifier = Modifier
             .fillMaxSize()
             .padding(4.dp)
+            // double-tap to zoom (keeps this local handler)
             .pointerInput(onClick) {
                 detectTapGestures(
                     onDoubleTap = { tabOffset ->
@@ -213,7 +267,7 @@ fun PhotoCard(photo: Photo, onClick: (() -> Unit)? = null) {
                     }
                 )
             }
-            .semantics { if (onClick != null) onClick(label = photo.title) { onClick(); true } }
+            // pinch/drag gestures for zoom/pan
             .pointerInput(Unit) {
                 detectTransformGestures(
                     onGesture = { centroid, pan, gestureZoom, _ ->
@@ -223,34 +277,58 @@ fun PhotoCard(photo: Photo, onClick: (() -> Unit)? = null) {
                         zoom = maxOf(1f, zoom * gestureZoom)
                     })
             }
-            .pointerInput(onClick){
-                detectTapGestures(
-                    onTap = {
-                        onClick?.invoke()
-                    }
-                )
-            }
             .graphicsLayer(
                 translationX = -offset.x * zoom,
                 translationY = -offset.y * zoom,
                 scaleX = zoom,
                 scaleY = zoom,
-                transformOrigin = TransformOrigin(0f,0f)
+                transformOrigin = TransformOrigin(0f, 0f)
 
             )
             .aspectRatio(1f)
-    ) {
-        if (scaled != null) {
-            Image(
-                bitmap = scaled,
-                contentDescription = photo.title,
-                contentScale= ContentScale.Crop,
-                modifier = Modifier.fillMaxSize()
-            )
+            // apply caller's modifier last so its combinedClickable/semantics receive the gestures
+            .then(modifier)
+     ) {
+         if (scaled != null) {
+             Image(
+                 bitmap = scaled,
+                 contentDescription = photo.title,
+                 contentScale = ContentScale.Crop,
+                 modifier = Modifier.fillMaxSize()
+             )
+             if (inSelectionMode) {
+                Log.i("PhotoCard", "PhotoCard: inSelectionMode")
+                if (selected) {
+                    Log.i("PhotoCard", "PhotoCard: selected")
+                    val bgColor = MaterialTheme.colorScheme.surfaceColorAtElevation(3.dp)
+                    Icon(
+                        Icons.Filled.CheckCircle,
+                        tint = MaterialTheme.colorScheme.primary,
+                        contentDescription = null,
+                        modifier = Modifier
+                            .padding(4.dp)
+                            .border(2.dp, color = bgColor, shape = CircleShape)
+                            .clip(CircleShape)
+                            .background(bgColor)
+                    )
+                } else {
+
+                    Icon(
+                        Icons.Filled.KeyboardArrowUp,
+                        tint = Color.White.copy(
+                            0.7f
+                        ), contentDescription = null,
+                        modifier = Modifier.padding(6.dp)
+                    )
+
+                }
+            }
+
         } else {
             // Fallback: small placeholder text if loading fails
             Text(text = photo.title)
         }
+
     }
 }
 
@@ -275,7 +353,9 @@ fun Offset.calculateNewOffset(
 
     ): Offset {
     val newScale = maxOf(1f, zoom * gestureZoom)
-    val newOffset = (pan + centroid / zoom) - (centroid / newScale + pan / zoom)
+    // use the receiver (current offset) so the extension receiver is used and the warning clears
+    val current = this
+    val newOffset = current + (pan + centroid / zoom) - (centroid / newScale + pan / zoom)
     return Offset(
         newOffset.x.coerceIn(0f, (size.width / zoom) * (zoom - 1f)),
         newOffset.y.coerceIn(0f, (size.height / zoom) * (zoom - 1f))
@@ -318,6 +398,6 @@ private fun rememberScaledImageBitmap(@DrawableRes resId: Int, maxPx: Int): Imag
 @Composable
 fun GreetingPreview() {
     PhotoGalleryTheme {
-        PhotoCard(PhotoRepo.photos.first())
+        PhotoCard(false, false, PhotoRepo.photos.first())
     }
 }
